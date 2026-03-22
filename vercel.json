@@ -1,0 +1,7 @@
+{
+  "rewrites": [
+    { "source": "/api/dex",    "destination": "/api/dex.js" },
+    { "source": "/api/solana", "destination": "/api/solana.js" },
+    { "source": "/((?!api/).*)", "destination": "/index.html" }
+  ]
+}

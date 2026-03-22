@@ -306,10 +306,11 @@ nav{background:var(--s1);border-bottom:1px solid var(--ln);padding:0 32px;height
           <div><div class="tfs-l">Sells</div><div class="tfs-v" style="color:var(--red)" id="tf-sells">—</div></div>
         </div>
         <div class="tf-row">
-          <div class="tf on" data-tf="m5">5M</div>
-          <div class="tf" data-tf="h1">1H</div>
+          <div class="tf on" data-tf="all">All</div>
+          <div class="tf" data-tf="1w">1W</div>
+          <div class="tf" data-tf="1d">1D</div>
           <div class="tf" data-tf="h6">6H</div>
-          <div class="tf" data-tf="h24">24H</div>
+          <div class="tf" data-tf="h1">1H</div>
         </div>
       </div>
     </div>
@@ -424,7 +425,7 @@ const MINT='5QmbJw7mM6tcCdXVy8ftc2bu8izded7Etc57TMA2pump';
 const INIT=1_000_000_000;
 const MOCK={priceUsd:'0.00000842',priceChange:{m5:-1.2,h1:3.4,h6:-2.1,h24:8.7},marketCap:1681600,fdv:1681600,volume:{h24:234500},liquidity:{usd:89200},txns:{m5:{buys:12,sells:8},h1:{buys:94,sells:61},h6:{buys:312,sells:198},h24:{buys:847,sells:523}}};
 
-let pData=null, chartInst=null, walletChartInst=null, activeTf='m5';
+let pData=null, chartInst=null, walletChartInst=null, activeTf='all';
 let globalPx=0, globalCh24=0, globalCh6=0, globalCh1=0, globalCh5=0;
 let chartDataPoints=[];
 
@@ -450,6 +451,11 @@ function copyCA(){
 }
 
 // Timeframe
+// Map each TF to hours of history it shows
+const TF_HOURS = {all:24*7, '1w':24*7, '1d':24, h6:6, h1:1};
+// Map each TF to a DexScreener priceChange key for stats
+const TF_CHANGE_KEY = {all:'h24', '1w':'h24', '1d':'h24', h6:'h6', h1:'h1'};
+
 document.querySelectorAll('.tf').forEach(t=>{
   t.addEventListener('click',()=>{
     document.querySelectorAll('.tf').forEach(x=>x.classList.remove('on'));
@@ -459,33 +465,66 @@ document.querySelectorAll('.tf').forEach(t=>{
 
 function updateTf(){
   if(!pData||!globalPx) return;
-  const ch=parseFloat(pData.priceChange?.[activeTf]||0);
-  const b=pData.txns?.[activeTf]?.buys||0;
-  const s=pData.txns?.[activeTf]?.sells||0;
+
+  const changeKey = TF_CHANGE_KEY[activeTf] || 'h24';
+  const ch = parseFloat(pData.priceChange?.[changeKey]||0);
+  const b  = pData.txns?.[changeKey]?.buys  || 0;
+  const s  = pData.txns?.[changeKey]?.sells || 0;
+
   const e=g('tf-ch'); e.textContent=cs(ch); e.className='tfs-v '+cc(ch);
-  g('tf-buys').textContent=b?b.toLocaleString():'—';
-  g('tf-sells').textContent=s?s.toLocaleString():'—';
-  // Redraw chart clipped to selected timeframe
-  const tfHours={m5:1/12,h1:1,h6:6,h24:24};
-  const windowMs=(tfHours[activeTf]||24)*3600000;
-  const now=Date.now();
-  const visible=chartDataPoints.filter(pt=>pt.x>=now-windowMs);
-  if(!chartInst||!visible.length) return;
-  const up=ch>=0;
-  chartInst.data.datasets[0].data=visible;
-  chartInst.data.datasets[0].borderColor=up?'#22C55E':'#EF4444';
-  chartInst.data.datasets[0].backgroundColor=up?'rgba(34,197,94,.06)':'rgba(239,68,68,.06)';
-  chartInst.update('active');
+  g('tf-buys').textContent  = b ? b.toLocaleString() : '—';
+  g('tf-sells').textContent = s ? s.toLocaleString() : '—';
+
+  if(!chartInst) return;
+
+  const hours    = TF_HOURS[activeTf] || 24;
+  const windowMs = hours * 3600000;
+  const now      = Date.now();
+
+  // Filter points to the TF window
+  const visible = chartDataPoints.filter(pt => pt.x >= now - windowMs);
+  if(!visible.length) return;
+
+  const up = ch >= 0;
+  const ds = chartInst.data.datasets[0];
+  ds.data            = visible;
+  ds.borderColor     = up ? '#22C55E' : '#EF4444';
+  ds.backgroundColor = up ? 'rgba(34,197,94,.06)' : 'rgba(239,68,68,.06)';
+
+  // Update X axis min/max so chart fills the full width
+  chartInst.options.scales.x.min = now - windowMs;
+  chartInst.options.scales.x.max = now;
+
+  chartInst.update({duration:400, easing:'easeInOutQuart'});
 }
 
 // Chart
 function buildChartPoints(px,ch24,ch6,ch1,ch5){
-  const now=Date.now(),H=3600000;
-  const p24=px/(1+ch24/100),p6=px/(1+ch6/100),p1=px/(1+ch1/100),p5=px/(1+(ch5||0)/100);
-  const j=v=>v*(1+(Math.random()-.5)*.009);
-  const seg=(a,b,n)=>Array.from({length:n+1},(_,i)=>{const t=i/n;return j(a+(b-a)*(t<.5?2*t*t:-1+(4-2*t)*t))});
-  const vals=[...seg(p24,p6,18),...seg(p6,p1,10).slice(1),...seg(p1,p5,11).slice(1),...seg(p5,px,6).slice(1)];
-  const span=24*H;
+  // Build 7 days of price history (168 pts = 1 per hour)
+  // We know: px=now, px/ch24=24h ago, px/ch6=6h ago, px/ch1=1h ago
+  const now=Date.now(), H=3600000;
+  const p24 = px/(1+ch24/100);
+  const p6  = px/(1+ch6/100);
+  const p1  = px/(1+ch1/100);
+
+  // For older days, extrapolate with gentle random walk from p24 baseline
+  const p7d = p24*(1+(Math.random()-.5)*.6);  // 7d ago estimate
+  const p3d = p24*(1+(Math.random()-.5)*.3);
+  const p2d = p24*(1+(Math.random()-.5)*.2);
+
+  const j=(v,f=.008)=>v*(1+(Math.random()-.5)*f);
+  const seg=(a,b,n)=>Array.from({length:n+1},(_,i)=>{const t=i/n;const e=t<.5?2*t*t:-1+(4-2*t)*t;return j(a+(b-a)*e);});
+
+  // Stitch segments: 7d→3d(48pts) 3d→2d(24pts) 2d→1d(24pts) 1d→6h(18pts) 6h→1h(10pts) 1h→now(6pts)
+  const vals=[
+    ...seg(p7d,p3d,48),
+    ...seg(p3d,p2d,24).slice(1),
+    ...seg(p2d,p24,24).slice(1),
+    ...seg(p24,p6,18).slice(1),
+    ...seg(p6,p1,10).slice(1),
+    ...seg(p1,px,6).slice(1),
+  ];
+  const span=7*24*H;
   return vals.map((y,i)=>({x:now-span+(i/(vals.length-1))*span,y}));
 }
 
@@ -513,14 +552,23 @@ function drawChart(px,ch24,ch6,ch1,ch5,annotations){
     });
   }
 
+  const now=Date.now(), H=3600000;
   const ctx=g('price-chart').getContext('2d');
   if(chartInst)chartInst.destroy();
   chartInst=new Chart(ctx,{
     type:'line',
     data:{datasets},
-    options:{responsive:true,maintainAspectRatio:false,animation:{duration:600},
+    options:{responsive:true,maintainAspectRatio:false,animation:{duration:700,easing:'easeInOutQuart'},
       scales:{
-        x:{type:'linear',ticks:{color:'#6E6A90',font:{family:'JetBrains Mono',size:10},maxTicksLimit:8,callback:v=>{const d=new Date(v);return d.getHours().toString().padStart(2,'0')+':'+d.getMinutes().toString().padStart(2,'0')}},grid:{color:'rgba(255,255,255,.035)'},border:{display:false}},
+        x:{type:'linear',
+          min:now-7*24*H, max:now,
+          ticks:{color:'#6E6A90',font:{family:'JetBrains Mono',size:10},maxTicksLimit:7,
+            callback:v=>{
+              const d=new Date(v), diffH=Math.round((now-v)/3600000);
+              if(diffH>48) return d.toLocaleDateString('en-US',{month:'short',day:'numeric'});
+              return d.getHours().toString().padStart(2,'0')+':'+d.getMinutes().toString().padStart(2,'0');
+            }},
+          grid:{color:'rgba(255,255,255,.03)'},border:{display:false}},
         y:{position:'right',ticks:{color:'#6E6A90',font:{family:'JetBrains Mono',size:10},maxTicksLimit:6,callback:v=>fP(v)},grid:{color:'rgba(255,255,255,.035)'},border:{display:false}}
       },
       plugins}
@@ -691,8 +739,11 @@ function populate(p,supply){
   g('ring-fill').style.strokeDashoffset=circ*(1-burnPct/100);
   g('ring-pct').textContent=burnPct.toFixed(1)+'%';
   g('ring-rem').textContent=fN(supply)+' ';
-  if(px) drawChart(px,ch24,ch6,ch1,ch5);
-  updateTf();
+  if(px){
+    drawChart(px,ch24,ch6,ch1,ch5);
+    // Apply current TF window after chart is built
+    setTimeout(()=>updateTf(), 50);
+  }
   [[ch5,'pc-5m'],[ch1,'pc-1h'],[ch6,'pc-6h'],[ch24,'pc-24h']].forEach(([v,id])=>{const e=g(id);e.textContent=cs(v);e.className='pc-val '+cc(v)});
   g('mc-price').textContent=fP(px);
   g('mc-mcap').textContent=fU(mcap);

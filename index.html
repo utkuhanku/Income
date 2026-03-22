@@ -369,7 +369,7 @@ nav{background:var(--s1);border-bottom:1px solid var(--ln);padding:0 32px;height
         <div class="ab-title">Supply & Burn</div>
         <div class="ab-row"><div class="ab-key">Burned to date</div><div class="ab-val burn" id="ab-burned">—</div></div>
         <div class="ab-row"><div class="ab-key">Avg burned / day</div><div class="ab-val burn" id="ab-bpd">—</div></div>
-        <div class="ab-row"><div class="ab-key">Days active</div><div class="ab-val" id="ab-age">~7 days</div></div>
+        <div class="ab-row"><div class="ab-key">Days active</div><div class="ab-val" id="ab-age">—</div></div>
         <div class="ab-row"><div class="ab-key">Days to halve remaining supply</div><div class="ab-val" id="ab-half">—</div></div>
         <div class="ab-row"><div class="ab-key">Remaining supply</div><div class="ab-val green" id="ab-supply">—</div></div>
       </div>
@@ -456,14 +456,26 @@ document.querySelectorAll('.tf').forEach(t=>{
     t.classList.add('on'); activeTf=t.dataset.tf; updateTf();
   });
 });
+
 function updateTf(){
-  if(!pData)return;
+  if(!pData||!globalPx) return;
   const ch=parseFloat(pData.priceChange?.[activeTf]||0);
   const b=pData.txns?.[activeTf]?.buys||0;
   const s=pData.txns?.[activeTf]?.sells||0;
   const e=g('tf-ch'); e.textContent=cs(ch); e.className='tfs-v '+cc(ch);
   g('tf-buys').textContent=b?b.toLocaleString():'—';
   g('tf-sells').textContent=s?s.toLocaleString():'—';
+  // Redraw chart clipped to selected timeframe
+  const tfHours={m5:1/12,h1:1,h6:6,h24:24};
+  const windowMs=(tfHours[activeTf]||24)*3600000;
+  const now=Date.now();
+  const visible=chartDataPoints.filter(pt=>pt.x>=now-windowMs);
+  if(!chartInst||!visible.length) return;
+  const up=ch>=0;
+  chartInst.data.datasets[0].data=visible;
+  chartInst.data.datasets[0].borderColor=up?'#22C55E':'#EF4444';
+  chartInst.data.datasets[0].backgroundColor=up?'rgba(34,197,94,.06)':'rgba(239,68,68,.06)';
+  chartInst.update('active');
 }
 
 // Chart
@@ -689,9 +701,13 @@ function populate(p,supply){
   g('mc-burned').textContent=fN(burned);
   g('mc-burnpct').textContent=burnPct.toFixed(2)+'%';
   g('mc-ratio').textContent=sells>0?(buys/sells).toFixed(2)+'x':'—';
-  const bpd=Math.round(burned/7),half=bpd>0?Math.round(supply/2/bpd):null,ratio=sells>0?(buys/sells).toFixed(2):'∞';
+  // Days active from real pair creation timestamp
+  const createdAt = p.pairCreatedAt ? Math.floor((Date.now() - p.pairCreatedAt)/86400000) : 7;
+  const daysActive = Math.max(1, createdAt);
+  const bpd=Math.round(burned/daysActive),half=bpd>0?Math.round(supply/2/bpd):null,ratio=sells>0?(buys/sells).toFixed(2):'∞';
   g('ab-burned').textContent=fN(burned)+' ('+burnPct.toFixed(2)+'%)';
   g('ab-bpd').textContent=fN(bpd)+' / day';
+  g('ab-age').textContent='~'+daysActive+' days';
   g('ab-half').textContent=half?'~'+half+' days':'—';
   g('ab-supply').textContent=fN(supply);
   g('ab-buys').textContent=buys?buys.toLocaleString():'—';
@@ -699,7 +715,7 @@ function populate(p,supply){
   g('ab-ratio').textContent=ratio+'x';
   const ach=g('ab-ch24'); ach.textContent=cs(ch24); ach.className='ab-val'+(ch24>=0?' green':' red');
   g('ab-liqmcap').textContent=mcap>0?((liq/mcap)*100).toFixed(1)+'%':'—';
-  g('insight').innerHTML=`<strong>${burnPct.toFixed(2)}%</strong> of all $INCOME ever minted destroyed in 7 days — <strong>${fN(bpd)} tokens/day</strong>. Remaining <strong>${fN(supply)}</strong> halves in ~<strong>${half||'—'} days</strong>. Buy/sell ratio <strong>${ratio}x</strong> — <strong>${buys>sells?'net buying':'net selling'} pressure</strong>.`;
+  g('insight').innerHTML=`<strong>${burnPct.toFixed(2)}%</strong> of all $INCOME ever minted destroyed in <strong>${daysActive} days</strong> — <strong>${fN(bpd)} tokens/day</strong>. Remaining <strong>${fN(supply)}</strong> halves in ~<strong>${half||'—'} days</strong>. Buy/sell ratio <strong>${ratio}x</strong> — <strong>${buys>sells?'net buying':'net selling'} pressure</strong>.`;
   if(px) renderTx(px,buys,sells);
 }
 
